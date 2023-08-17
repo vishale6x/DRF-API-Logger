@@ -1,5 +1,5 @@
 # DRF API Logger
-![version](https://img.shields.io/badge/version-1.1.11-blue.svg)
+![version](https://img.shields.io/badge/version-1.1.14-blue.svg)
 [![Downloads](https://static.pepy.tech/personalized-badge/drf-api-logger?period=total&units=none&left_color=black&right_color=orange&left_text=Downloads%20Total)](http://pepy.tech/project/drf-api-logger)
 [![Downloads](https://static.pepy.tech/personalized-badge/drf-api-logger?period=month&units=none&left_color=black&right_color=orange&left_text=Downloads%20Last%20Month)](https://pepy.tech/project/drf-api-logger)
 [![Downloads](https://static.pepy.tech/personalized-badge/drf-api-logger?period=week&units=none&left_color=black&right_color=orange&left_text=Downloads%20Last%20Week)](https://pepy.tech/project/drf-api-logger)
@@ -215,6 +215,28 @@ DRF_API_LOGGER_PATH_TYPE = 'ABSOLUTE'  # Default to ABSOLUTE if not specified
 # Possible values are ABSOLUTE, FULL_PATH or RAW_URI
 ```
 
+### Tracing
+You can enable tracing by specifying `DRF_API_LOGGER_ENABLE_TRACING` in settings.py.
+This will add a tracing id (UUID.uuid4()) in the signals of DRF API Logger (if enabled).
+
+In views, you can use request.tracing_id to get the tracing id.
+```python
+DRF_API_LOGGER_ENABLE_TRACING = True  # default to False
+```
+
+### Want to generate your own tracing uuid?
+By default, DRF API Logger usage uuid.uuid4() to generate tracing id.
+If you want to use your custom function to generate uuid, specify DRF_API_LOGGER_TRACING_FUNC in setting.py file.
+```python
+DRF_API_LOGGER_TRACING_FUNC = 'foo.bar.func_name'
+```
+
+### Tracing already present in headers?
+If the tracing id is already coming as a part of request headers, you can specify the header name.
+```python
+DRF_API_LOGGER_TRACING_ID_HEADER_NAME: str = 'X_TRACING_ID'  # Replace with actual header name.
+```
+
 Considering we are accessing the following URL: http://127.0.0.1:8000/api/v1/?page=123
 DRF_API_LOGGER_PATH_TYPE possible values are:
 1. ABSOLUTE (Default) :   
@@ -242,18 +264,19 @@ DRF_API_LOGGER_PATH_TYPE possible values are:
 You can use the DRF API Logger Model to query some information.
 
 Note: Make sure to set "DRF_API_LOGGER_DATABASE = True" in settings.py file.
-```
+```python
 from drf_api_logger.models import APILogsModel
 
 """
 Example:
 Select records for status_code 200.
 """
+
 result_for_200_status_code = APILogsModel.objects.filter(status_code=200)
 ```
 
 DRF API Logger Model:
-```
+```python
 class APILogsModel(Model):
    id = models.BigAutoField(primary_key=True)
    api = models.CharField(max_length=1024, help_text='API URL')
@@ -281,4 +304,3 @@ class APILogsModel(Model):
 After sometime, there will be too many data in the database. Searching and filter may get slower.
 If you want, you can delete or archive the older data.
 To improve the searching or filtering, try to add indexes in the 'drf_api_logs' table.
-

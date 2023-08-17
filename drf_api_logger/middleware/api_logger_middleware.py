@@ -1,5 +1,8 @@
+import importlib
 import json
 import time
+import uuid
+
 from django.conf import settings
 from django.urls import resolve
 from django.utils import timezone
@@ -56,6 +59,19 @@ class APILoggerMiddleware:
                     settings.DRF_API_LOGGER_STATUS_CODES) is list:
                 self.DRF_API_LOGGER_STATUS_CODES = settings.DRF_API_LOGGER_STATUS_CODES
 
+        self.DRF_API_LOGGER_ENABLE_TRACING = False
+        self.DRF_API_LOGGER_TRACING_ID_HEADER_NAME = None
+        if hasattr(settings, 'DRF_API_LOGGER_ENABLE_TRACING'):
+            self.DRF_API_LOGGER_ENABLE_TRACING = settings.DRF_API_LOGGER_ENABLE_TRACING
+            if self.DRF_API_LOGGER_ENABLE_TRACING and hasattr(settings, 'DRF_API_LOGGER_TRACING_ID_HEADER_NAME'):
+                self.DRF_API_LOGGER_TRACING_ID_HEADER_NAME = settings.DRF_API_LOGGER_TRACING_ID_HEADER_NAME
+
+        self.tracing_func_name = None
+        if hasattr(settings, 'DRF_API_LOGGER_TRACING_FUNC'):
+            mod_name, func_name = settings.DRF_API_LOGGER_TRACING_FUNC.rsplit('.', 1)
+            mod = importlib.import_module(mod_name)
+            self.tracing_func_name = getattr(mod, func_name)
+
     def __call__(self, request):
 
         # Run only if logger is enabled.
@@ -76,12 +92,33 @@ class APILoggerMiddleware:
             if namespace in self.DRF_API_LOGGER_SKIP_NAMESPACE:
                 return self.get_response(request)
 
+            # Code to be executed for each request/response after
+            # the view is called.
+
             start_time = time.time()
+
+            headers = get_headers(request=request)
+            method = request.method
+
             request_data = ''
             try:
                 request_data = json.loads(request.body) if request.body else ''
             except:
                 pass
+
+            tracing_id = None
+            if self.DRF_API_LOGGER_ENABLE_TRACING:
+                if self.DRF_API_LOGGER_TRACING_ID_HEADER_NAME:
+                    tracing_id = headers.get(self.DRF_API_LOGGER_TRACING_ID_HEADER_NAME)
+                if not tracing_id:
+                    """
+                    If tracing is is not present in header, get it from function or uuid.
+                    """
+                    if self.tracing_func_name:
+                        tracing_id = self.tracing_func_name()
+                    else:
+                        tracing_id = str(uuid.uuid4())
+                request.tracing_id = tracing_id
 
             # Code to be executed for each request before
             # the view (and later middleware) are called.
@@ -91,18 +128,18 @@ class APILoggerMiddleware:
             if self.DRF_API_LOGGER_STATUS_CODES and response.status_code not in self.DRF_API_LOGGER_STATUS_CODES:
                 return response
 
-            # Code to be executed for each request/response after
-            # the view is called.
-
-            headers = get_headers(request=request)
-            method = request.method
-
             # Log only registered methods if available.
             if len(self.DRF_API_LOGGER_METHODS) > 0 and method not in self.DRF_API_LOGGER_METHODS:
                 return response
 
-            if response.get('content-type') in ('application/json', 'application/vnd.api+json',):
-                if getattr(response, 'streaming', False):
+            if response.get('content-type') in (
+                    'application/json', 'application/vnd.api+json', 'application/gzip', 'application/octet-stream'):
+
+                if response.get('content-type') == 'application/gzip':
+                    response_body = '** GZIP Archive **'
+                elif response.get('content-type') == 'application/octet-stream':
+                    response_body = '** Binary File **'
+                elif getattr(response, 'streaming', False):
                     response_body = '** Streaming **'
                 else:
                     if type(response.content) == bytes:
@@ -119,7 +156,7 @@ class APILoggerMiddleware:
                     api = request.build_absolute_uri()
 
                 data = dict(
-                    api=api,
+                    api=mask_sensitive_data(api, mask_api_parameters=True),
                     headers=mask_sensitive_data(headers),
                     body=mask_sensitive_data(request_data),
                     method=method,
@@ -138,6 +175,10 @@ class APILoggerMiddleware:
                         d['response'] = json.dumps(d['response'], indent=4, ensure_ascii=False)
                         LOGGER_THREAD.put_log_data(data=d)
                 if self.DRF_API_LOGGER_SIGNAL:
+                    if tracing_id:
+                        data.update({
+                            'tracing_id': tracing_id
+                        })
                     API_LOGGER_SIGNAL.listen(**data)
             else:
                 return response
